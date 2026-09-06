@@ -1,0 +1,11 @@
+[package]
+name = "vapor_registry_server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+axum = "0.8"
+serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread"] }
