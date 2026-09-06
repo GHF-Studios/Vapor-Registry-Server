@@ -1,5 +1,5 @@
 cargo:rerun-if-env-changed=LIBSQLITE3_SYS_USE_PKG_CONFIG
-cargo:include=/home/leslieghf/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libsqlite3-sys-0.30.1/sqlite3
+cargo:include=/home/leslieghf/.local/share/Steam/steamapps/common/Loo Cast/cargo-home/registry/src/index.crates.io-1949cf8c6b5b557f/libsqlite3-sys-0.30.1/sqlite3
 cargo:rerun-if-changed=sqlite3/sqlite3.c
 cargo:rerun-if-changed=sqlite3/wasm32-wasi-vfs.c
 cargo:rerun-if-env-changed=SQLITE_MAX_VARIABLE_NUMBER
