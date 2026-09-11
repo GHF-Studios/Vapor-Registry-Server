@@ -169,11 +169,11 @@ async fn seed_official_registry(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     let repositories = [
         (
-            "github:GHF-Studios/Vapor-Root",
-            "Vapor-Root",
+            "github:GHF-Studios/Vapor-Client",
+            "Vapor-Client",
             "container-repo",
-            "https://github.com/GHF-Studios/Vapor-Root",
-            "https://github.com/GHF-Studios/Vapor-Root.git",
+            "https://github.com/GHF-Studios/Vapor-Client",
+            "https://github.com/GHF-Studios/Vapor-Client.git",
         ),
         (
             "github:GHF-Studios/Vapor",
@@ -190,11 +190,11 @@ async fn seed_official_registry(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             "https://github.com/GHF-Studios/Vapor-Examples.git",
         ),
         (
-            "github:GHF-Studios/Vapor-Server-Root",
-            "Vapor-Server-Root",
+            "github:GHF-Studios/Vapor-Platform-Server",
+            "Vapor-Platform-Server",
             "container-repo",
-            "https://github.com/GHF-Studios/Vapor-Server-Root",
-            "https://github.com/GHF-Studios/Vapor-Server-Root.git",
+            "https://github.com/GHF-Studios/Vapor-Platform-Server",
+            "https://github.com/GHF-Studios/Vapor-Platform-Server.git",
         ),
         (
             "github:GHF-Studios/Vapor-Registry-Server",
@@ -249,9 +249,9 @@ async fn seed_official_registry(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
 
     for (repository_id, checkout_path, ordinal) in [
-        ("github:GHF-Studios/Vapor-Root", "Vapor-Root", 10_i64),
+        ("github:GHF-Studios/Vapor-Client", "Vapor-Root", 10_i64),
         (
-            "github:GHF-Studios/Vapor-Server-Root",
+            "github:GHF-Studios/Vapor-Platform-Server",
             "Vapor-Server-Root",
             20_i64,
         ),
@@ -493,9 +493,9 @@ mod tests {
 
         assert_eq!(ecosystem.repositories.len(), 2,);
 
-        assert_eq!(ecosystem.repositories[0].name, "Vapor-Root",);
+        assert_eq!(ecosystem.repositories[0].name, "Vapor-Client",);
 
-        assert_eq!(ecosystem.repositories[1].name, "Vapor-Server-Root",);
+        assert_eq!(ecosystem.repositories[1].name, "Vapor-Platform-Server",);
 
         let account = provider_account(&pool, "github", "GHF-Studios")
             .await
