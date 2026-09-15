@@ -169,6 +169,13 @@ async fn seed_official_registry(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     let repositories = [
         (
+            "github:GHF-Studios/Loo-Cast",
+            "Loo-Cast",
+            "workspace",
+            "https://github.com/GHF-Studios/Loo-Cast",
+            "https://github.com/GHF-Studios/Loo-Cast.git",
+        ),
+        (
             "github:GHF-Studios/Vapor-Client",
             "Vapor-Client",
             "container-repo",
@@ -235,9 +242,9 @@ async fn seed_official_registry(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await?;
     }
 
-    // For ecosystem acquisition the Registry only needs to identify the
-    // top-level Container Repos. Their authored `.gitmodules` remain
-    // authoritative for contained Workspace revisions.
+    // Ecosystem acquisition identifies the independently acquired top-level
+    // first-party source roots. Container Repos remain authoritative for their
+    // contained Workspace revisions through authored `.gitmodules`.
     sqlx::query(
         r#"
         DELETE FROM ecosystem_repositories
@@ -249,11 +256,12 @@ async fn seed_official_registry(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
 
     for (repository_id, checkout_path, ordinal) in [
-        ("github:GHF-Studios/Vapor-Client", "Vapor-Root", 10_i64),
+        ("github:GHF-Studios/Loo-Cast", "Loo-Cast", 10_i64),
+        ("github:GHF-Studios/Vapor-Client", "Vapor-Client", 20_i64),
         (
             "github:GHF-Studios/Vapor-Platform-Server",
-            "Vapor-Server-Root",
-            20_i64,
+            "Vapor-Platform-Server",
+            30_i64,
         ),
     ] {
         sqlx::query(
@@ -491,11 +499,13 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(ecosystem.repositories.len(), 2,);
+        assert_eq!(ecosystem.repositories.len(), 3,);
 
-        assert_eq!(ecosystem.repositories[0].name, "Vapor-Client",);
+        assert_eq!(ecosystem.repositories[0].name, "Loo-Cast",);
 
-        assert_eq!(ecosystem.repositories[1].name, "Vapor-Platform-Server",);
+        assert_eq!(ecosystem.repositories[1].name, "Vapor-Client",);
+
+        assert_eq!(ecosystem.repositories[2].name, "Vapor-Platform-Server",);
 
         let account = provider_account(&pool, "github", "GHF-Studios")
             .await
@@ -504,6 +514,6 @@ mod tests {
 
         assert!(account.account.verified,);
 
-        assert_eq!(account.repositories.len(), 5,);
+        assert_eq!(account.repositories.len(), 6,);
     }
 }
