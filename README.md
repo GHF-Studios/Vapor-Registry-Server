@@ -13,6 +13,16 @@ Its current responsibilities are deliberately small:
 
 Git remains authoritative for source and source history.
 
+The public `ghf-studios/vapor` ecosystem includes Vapor Client and Platform
+Server source repositories. It does not publish, require, or acquire Loo-Cast.
+
+Protected ecosystem metadata is checked through Identity before Registry
+returns it. Configure `VAPOR_REGISTRY_IDENTITY_AUTHZ_URL` to the loopback
+Identity authorization route and set `VAPOR_REGISTRY_IDENTITY_AUTHZ_TOKEN` to
+the same 64-character hexadecimal server-only token as Identity. Missing or
+invalid authorization configuration leaves public records available and
+protected records hidden. The Registry never receives the Steam publisher key.
+
 Git repository state such as `.gitmodules` remains authoritative for Container Repo → Workspace revision topology.
 
 Vapor Identity remains authoritative for people, sessions, linked personal provider identities, and roles.

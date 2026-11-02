@@ -1,6 +1,7 @@
+use crate::authorization::{LocalSourceRequirement, PermissionPolicy};
 use crate::types::{
-    Ecosystem, EcosystemRepository, EcosystemResponse, ProviderAccount, ProviderAccountResponse,
-    ProviderRepository, RegistryStatus, REGISTRY_SCHEMA_VERSION,
+    AdminCatalogEntry, Ecosystem, EcosystemRepository, EcosystemResponse, ProviderAccount,
+    ProviderAccountResponse, ProviderRepository, RegistryStatus, REGISTRY_SCHEMA_VERSION,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
@@ -27,6 +28,41 @@ pub async fn open_database(path: &Path) -> Result<SqlitePool, sqlx::Error> {
 pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     run_migrations(pool).await?;
     seed_official_registry(pool).await?;
+    validate_access_policies(pool).await?;
+
+    Ok(())
+}
+
+async fn validate_access_policies(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let rows = sqlx::query_as::<_, (i64, String, String, String)>(
+        "SELECT schema_version, visibility, permission_policy_json,
+                local_requirements_json
+         FROM ecosystem_access_policies",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (schema_version, visibility, permission_json, local_json) in rows {
+        let invalid = || sqlx::Error::Protocol("invalid ecosystem access policy".into());
+        if schema_version != 1 || !matches!(visibility.as_str(), "public" | "protected") {
+            return Err(invalid());
+        }
+        let permission_policy: PermissionPolicy =
+            serde_json::from_str(&permission_json).map_err(|_| invalid())?;
+        if permission_policy.requirements.len() > 16
+            || (visibility == "protected" && permission_policy.requirements.is_empty())
+        {
+            return Err(invalid());
+        }
+        let local_requirements: Vec<LocalSourceRequirement> =
+            serde_json::from_str(&local_json).map_err(|_| invalid())?;
+        if local_requirements
+            .iter()
+            .any(|requirement| requirement.source_id.trim().is_empty())
+        {
+            return Err(invalid());
+        }
+    }
 
     Ok(())
 }
@@ -70,6 +106,17 @@ async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             name TEXT NOT NULL,
             display_name TEXT NOT NULL,
             UNIQUE(namespace, name)
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS ecosystem_access_policies (
+            ecosystem_id TEXT PRIMARY KEY
+                REFERENCES ecosystems(id)
+                ON DELETE CASCADE,
+            schema_version INTEGER NOT NULL,
+            visibility TEXT NOT NULL CHECK (visibility IN ('public', 'protected')),
+            permission_policy_json TEXT NOT NULL,
+            local_requirements_json TEXT NOT NULL
         )
         "#,
         r#"
@@ -167,14 +214,19 @@ async fn seed_official_registry(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(&mut *transaction)
     .await?;
 
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO ecosystem_access_policies(
+            ecosystem_id, schema_version, visibility,
+            permission_policy_json, local_requirements_json
+        ) VALUES (?, 1, 'public', '{"mode":"all","requirements":[]}', '[]')
+        "#,
+    )
+    .bind(VAPOR_ECOSYSTEM_ID)
+    .execute(&mut *transaction)
+    .await?;
+
     let repositories = [
-        (
-            "github:GHF-Studios/Loo-Cast",
-            "Loo-Cast",
-            "workspace",
-            "https://github.com/GHF-Studios/Loo-Cast",
-            "https://github.com/GHF-Studios/Loo-Cast.git",
-        ),
         (
             "github:GHF-Studios/Vapor-Client",
             "Vapor-Client",
@@ -242,9 +294,16 @@ async fn seed_official_registry(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await?;
     }
 
-    // Ecosystem acquisition identifies the independently acquired top-level
-    // first-party source roots. Container Repos remain authoritative for their
-    // contained Workspace revisions through authored `.gitmodules`.
+    // Remove the legacy public listing as well as its ecosystem membership.
+    // This migration is intentionally idempotent so existing installations
+    // stop exposing the Loo-Cast repository after upgrading the Registry.
+    sqlx::query("DELETE FROM repositories WHERE id = 'github:GHF-Studios/Loo-Cast'")
+        .execute(&mut *transaction)
+        .await?;
+
+    // The public Vapor ecosystem is intentionally usable without Loo-Cast.
+    // Container Repos remain authoritative for their contained Workspace
+    // revisions through authored `.gitmodules`.
     sqlx::query(
         r#"
         DELETE FROM ecosystem_repositories
@@ -256,12 +315,11 @@ async fn seed_official_registry(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .await?;
 
     for (repository_id, checkout_path, ordinal) in [
-        ("github:GHF-Studios/Loo-Cast", "Loo-Cast", 10_i64),
-        ("github:GHF-Studios/Vapor-Client", "Vapor-Client", 20_i64),
+        ("github:GHF-Studios/Vapor-Client", "Vapor-Client", 10_i64),
         (
             "github:GHF-Studios/Vapor-Platform-Server",
             "Vapor-Platform-Server",
-            30_i64,
+            20_i64,
         ),
     ] {
         sqlx::query(
@@ -308,6 +366,72 @@ pub async fn status(pool: &SqlitePool) -> Result<RegistryStatus, sqlx::Error> {
         provider_accounts,
         repositories,
     })
+}
+
+pub async fn admin_catalog(pool: &SqlitePool) -> Result<Vec<AdminCatalogEntry>, sqlx::Error> {
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
+        r#"
+        SELECT
+            ecosystems.id,
+            ecosystems.display_name,
+            ecosystem_access_policies.visibility,
+            provider_accounts.provider,
+            provider_accounts.login,
+            repositories.name,
+            repositories.kind,
+            ecosystem_repositories.checkout_path
+        FROM ecosystems
+        LEFT JOIN ecosystem_access_policies
+          ON ecosystem_access_policies.ecosystem_id = ecosystems.id
+        LEFT JOIN ecosystem_repositories
+          ON ecosystem_repositories.ecosystem_id = ecosystems.id
+        LEFT JOIN repositories
+          ON repositories.id = ecosystem_repositories.repository_id
+        LEFT JOIN provider_accounts
+          ON provider_accounts.id = repositories.provider_account_id
+        ORDER BY ecosystems.id, ecosystem_repositories.ordinal, repositories.id
+        LIMIT 200
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(
+                ecosystem_id,
+                display_name,
+                visibility,
+                provider,
+                owner,
+                repository,
+                source_kind,
+                checkout_path,
+            )| AdminCatalogEntry {
+                ecosystem_id,
+                display_name,
+                visibility: visibility.unwrap_or_else(|| "unknown".to_owned()),
+                provider,
+                owner,
+                repository,
+                source_kind,
+                checkout_path,
+            },
+        )
+        .collect())
 }
 
 pub async fn ecosystem(
@@ -405,7 +529,23 @@ pub async fn ecosystem(
         },
 
         repositories,
+        local_requirements: Vec::new(),
     }))
+}
+
+pub async fn ecosystem_access_policy(
+    pool: &SqlitePool,
+    ecosystem_id: &str,
+) -> Result<Option<(i64, String, String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (i64, String, String, String)>(
+        "SELECT schema_version, visibility, permission_policy_json,
+                local_requirements_json
+         FROM ecosystem_access_policies
+         WHERE ecosystem_id = ?",
+    )
+    .bind(ecosystem_id)
+    .fetch_optional(pool)
+    .await
 }
 
 pub async fn provider_account(
@@ -499,13 +639,16 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(ecosystem.repositories.len(), 3,);
+        assert_eq!(ecosystem.repositories.len(), 2,);
 
-        assert_eq!(ecosystem.repositories[0].name, "Loo-Cast",);
+        assert_eq!(ecosystem.repositories[0].name, "Vapor-Client",);
 
-        assert_eq!(ecosystem.repositories[1].name, "Vapor-Client",);
+        assert_eq!(ecosystem.repositories[1].name, "Vapor-Platform-Server",);
 
-        assert_eq!(ecosystem.repositories[2].name, "Vapor-Platform-Server",);
+        assert!(!ecosystem
+            .repositories
+            .iter()
+            .any(|repository| repository.name == "Loo-Cast"));
 
         let account = provider_account(&pool, "github", "GHF-Studios")
             .await
@@ -514,6 +657,11 @@ mod tests {
 
         assert!(account.account.verified,);
 
-        assert_eq!(account.repositories.len(), 6,);
+        assert_eq!(account.repositories.len(), 5,);
+
+        assert!(!account
+            .repositories
+            .iter()
+            .any(|repository| repository.name == "Loo-Cast"));
     }
 }

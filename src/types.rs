@@ -1,11 +1,14 @@
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
+use crate::authorization::LocalSourceRequirement;
+
+pub const REGISTRY_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
+    pub authorization: Option<crate::authorization::IdentityAuthorizationClient>,
 }
 
 #[derive(Debug, Serialize)]
@@ -20,6 +23,18 @@ pub struct RegistryStatus {
     pub ecosystems: i64,
     pub provider_accounts: i64,
     pub repositories: i64,
+}
+
+#[derive(Debug)]
+pub struct AdminCatalogEntry {
+    pub ecosystem_id: String,
+    pub display_name: String,
+    pub visibility: String,
+    pub provider: Option<String>,
+    pub owner: Option<String>,
+    pub repository: Option<String>,
+    pub source_kind: Option<String>,
+    pub checkout_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,6 +62,7 @@ pub struct EcosystemResponse {
     pub schema_version: u32,
     pub ecosystem: Ecosystem,
     pub repositories: Vec<EcosystemRepository>,
+    pub local_requirements: Vec<LocalSourceRequirement>,
 }
 
 #[derive(Debug, Serialize)]
