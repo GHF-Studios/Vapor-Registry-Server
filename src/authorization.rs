@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 
 const MAX_POLICY_REQUIREMENTS: usize = 16;
+const MAX_AUTH_RESPONSE_BYTES: usize = 4096;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -76,7 +77,9 @@ impl IdentityAuthorizationClient {
             return None;
         }
         let http = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(1))
             .timeout(std::time::Duration::from_secs(3))
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent("Vapor-Registry-Server/0.1")
             .build()
             .ok()?;
@@ -107,13 +110,15 @@ impl IdentityAuthorizationClient {
             .send()
             .await
             .map_err(|_| ())?;
-        if !response.status().is_success() {
+        if response.status() != reqwest::StatusCode::OK
+            || response
+                .content_length()
+                .is_some_and(|length| length > MAX_AUTH_RESPONSE_BYTES as u64)
+        {
             return Err(());
         }
-        let decision = response
-            .json::<AuthorizationResponse>()
-            .await
-            .map_err(|_| ())?;
+        let body = read_bounded_response(response).await?;
+        let decision: AuthorizationResponse = serde_json::from_slice(&body).map_err(|_| ())?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| ())?
@@ -131,16 +136,81 @@ impl IdentityAuthorizationClient {
     }
 }
 
+async fn read_bounded_response(mut response: reqwest::Response) -> Result<Vec<u8>, ()> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
+        if body.len().saturating_add(chunk.len()) > MAX_AUTH_RESPONSE_BYTES {
+            return Err(());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 fn is_service_token(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn is_loopback_url(url: &Url) -> bool {
-    if url.scheme() != "http" || url.username() != "" || url.password().is_some() {
+    if url.scheme() != "http"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
         return false;
     }
     matches!(
         url.host_str(),
         Some("127.0.0.1") | Some("localhost") | Some("::1")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IdentityAuthorizationClient, PermissionPolicy, PermissionRequirement, PolicyMode};
+    use axum::routing::post;
+    use axum::Router;
+    use reqwest::Url;
+    use std::time::Duration;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn rejects_identity_authorization_response_over_the_size_limit() {
+        let body = format!(
+            "{{\"allowed\":true,\"expires_at_unix\":{}}}{}",
+            i64::MAX,
+            " ".repeat(5000)
+        );
+        let app = Router::new().route(
+            "/authorize",
+            post(move || {
+                let body = body.clone();
+                async move { body }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let client = IdentityAuthorizationClient::for_test(
+            Url::parse(&format!("http://{address}/authorize")).unwrap(),
+            "A".repeat(64),
+            http,
+        );
+        let policy = PermissionPolicy {
+            mode: PolicyMode::All,
+            requirements: vec![PermissionRequirement::Role {
+                role: "root".to_owned(),
+            }],
+        };
+
+        assert!(client.allows("session-token", &policy).await.is_err());
+        server.abort();
+    }
 }
