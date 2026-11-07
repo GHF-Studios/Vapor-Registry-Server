@@ -113,7 +113,7 @@ fn render_catalog(entries: &[crate::types::AdminCatalogEntry]) -> String {
     };
     let count = entries.len();
     format!(
-        "<p class=\"eyebrow\">Workshop · Registry</p><h1>Catalog</h1><p class=\"muted\">Read-only registry inventory · {count} rows shown (maximum 200)</p><div class=\"card\"><table><thead><tr><th>Ecosystem</th><th>Canonical ID</th><th>Visibility</th><th>Source</th><th>Source kind</th><th>Checkout path</th><th>Workshop binding</th><th>Release channel</th></tr></thead><tbody>{rows}</tbody></table><p class=\"muted\">Publishing and catalog mutation are not available in this view.</p></div>"
+        "<p class=\"eyebrow\">Workshop · Registry</p><h1>Catalog</h1><p class=\"muted\">Read-only registry inventory · {count} rows shown (maximum 200)</p><div class=\"card\"><div class=\"table-scroll\" role=\"region\" tabindex=\"0\" aria-label=\"Registry catalog table\"><table><thead><tr><th>Ecosystem</th><th>Canonical ID</th><th>Visibility</th><th>Source</th><th>Source kind</th><th>Checkout path</th><th>Workshop binding</th><th>Release channel</th></tr></thead><tbody>{rows}</table></div><p class=\"muted\">Publishing and catalog mutation are not available in this view.</p></div>"
     )
 }
 
@@ -281,6 +281,7 @@ mod tests {
         assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
         assert!(!html.contains("<img src=x onerror=alert(1)>"));
         assert!(html.contains("Publishing and catalog mutation are not available"));
+        assert!(html.contains("aria-label=\"Registry catalog table\""));
         assert!(!html.contains("<button"));
         assert!(!html.contains("<form"));
         server.abort();
