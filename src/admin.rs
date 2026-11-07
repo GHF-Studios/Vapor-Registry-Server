@@ -55,7 +55,7 @@ async fn workshop_page(State(state): State<AppState>, headers: HeaderMap) -> Res
             );
         }
     };
-    html_response(StatusCode::OK, render_catalog(&entries))
+    admin_page_response(StatusCode::OK, render_catalog(&entries))
 }
 
 fn session_token(headers: &HeaderMap) -> Option<String> {
@@ -113,7 +113,7 @@ fn render_catalog(entries: &[crate::types::AdminCatalogEntry]) -> String {
     };
     let count = entries.len();
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Workshop Registry · Vapor Admin</title><link rel=\"stylesheet\" href=\"/admin/assets/admin.css\"><script defer src=\"/admin/assets/admin.js\"></script></head><body><main id=\"admin-content\"><p class=\"eyebrow\">Workshop · Registry</p><h1>Catalog</h1><p class=\"muted\">Read-only registry inventory · {count} rows shown (maximum 200)</p><div class=\"card\"><table><thead><tr><th>Ecosystem</th><th>Canonical ID</th><th>Visibility</th><th>Source</th><th>Source kind</th><th>Checkout path</th><th>Workshop binding</th><th>Release channel</th></tr></thead><tbody>{rows}</tbody></table><p class=\"muted\">Publishing and catalog mutation are not available in this view.</p></div></main></body></html>"
+        "<p class=\"eyebrow\">Workshop · Registry</p><h1>Catalog</h1><p class=\"muted\">Read-only registry inventory · {count} rows shown (maximum 200)</p><div class=\"card\"><table><thead><tr><th>Ecosystem</th><th>Canonical ID</th><th>Visibility</th><th>Source</th><th>Source kind</th><th>Checkout path</th><th>Workshop binding</th><th>Release channel</th></tr></thead><tbody>{rows}</tbody></table><p class=\"muted\">Publishing and catalog mutation are not available in this view.</p></div>"
     )
 }
 
@@ -132,11 +132,19 @@ fn plain_response(status: StatusCode, message: &'static str) -> Response {
     } else {
         message.to_owned()
     };
-    response(status, "text/html; charset=utf-8", body)
+    response(
+        status,
+        "application/vnd.vapor.admin-page.v1+html; charset=utf-8",
+        body,
+    )
 }
 
-fn html_response(status: StatusCode, body: String) -> Response {
-    response(status, "text/html; charset=utf-8", body)
+fn admin_page_response(status: StatusCode, body: String) -> Response {
+    response(
+        status,
+        "application/vnd.vapor.admin-page.v1+html; charset=utf-8",
+        body,
+    )
 }
 
 fn response(status: StatusCode, content_type: &'static str, body: String) -> Response {
@@ -240,6 +248,10 @@ mod tests {
         let response = super::workshop_page(State(state), HeaderMap::new()).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "application/vnd.vapor.admin-page.v1+html; charset=utf-8"
+        );
+        assert_eq!(
             response.headers().get("cache-control").unwrap(),
             "private, no-store"
         );
@@ -251,8 +263,18 @@ mod tests {
         let (state, server) = test_state().await;
         let response = super::workshop_page(State(state), session_headers()).await;
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "application/vnd.vapor.admin-page.v1+html; charset=utf-8"
+        );
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let html = std::str::from_utf8(&body).unwrap();
+        assert!(html.starts_with("<p class=\"eyebrow\">Workshop · Registry</p>"));
+        assert!(!html.contains("<!doctype html>"));
+        assert!(!html.contains("<html"));
+        assert!(!html.contains("<head"));
+        assert!(!html.contains("<body"));
+        assert!(!html.contains("</main>"));
         assert!(html.contains("Vapor"));
         assert!(html.contains("ghf-studios/vapor"));
         assert!(html.contains("Not tracked"));
