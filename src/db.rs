@@ -29,6 +29,17 @@ pub async fn initialize(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     run_migrations(pool).await?;
     seed_official_registry(pool).await?;
     validate_access_policies(pool).await?;
+    for (slug, name, summary) in [
+        ("loo-cast", "Loo Cast", "The Loo Cast Project workspace."),
+        (
+            "mad-max-modding",
+            "Mad Max Modding",
+            "The Mad Max Modding Project workspace.",
+        ),
+    ] {
+        sqlx::query("INSERT OR IGNORE INTO projects(id, namespace, slug, display_name, summary, state) VALUES (?, 'ghf-studios', ?, ?, ?, 'active')")
+            .bind(format!("ghf-studios/{slug}")).bind(slug).bind(name).bind(summary).execute(pool).await?;
+    }
 
     Ok(())
 }
@@ -69,6 +80,17 @@ async fn validate_access_policies(pool: &SqlitePool) -> Result<(), sqlx::Error> 
 
 async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     const MIGRATIONS: &[&str] = &[
+        r#"
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY CHECK (id = namespace || '/' || slug),
+            namespace TEXT NOT NULL CHECK (length(namespace) BETWEEN 1 AND 63 AND namespace NOT GLOB '*[^a-z0-9_-]*'),
+            slug TEXT NOT NULL CHECK (length(slug) BETWEEN 1 AND 63 AND slug NOT GLOB '*[^a-z0-9_-]*'),
+            display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 200),
+            summary TEXT NOT NULL CHECK (length(summary) <= 2000),
+            state TEXT NOT NULL CHECK (state IN ('active', 'archived')),
+            UNIQUE(namespace, slug)
+        )
+        "#,
         r#"
         CREATE TABLE IF NOT EXISTS registry_meta (
             key TEXT PRIMARY KEY,
@@ -664,4 +686,21 @@ mod tests {
             .iter()
             .any(|repository| repository.name == "Loo-Cast"));
     }
+}
+
+pub(crate) async fn project(
+    pool: &SqlitePool,
+    id: &str,
+) -> Result<Option<crate::types::Project>, sqlx::Error> {
+    let row = sqlx::query_as::<_, (String,String,String,String,String,String)>("SELECT id,namespace,slug,display_name,summary,state FROM projects WHERE id = ? AND state = 'active'").bind(id).fetch_optional(pool).await?;
+    Ok(row.map(
+        |(id, namespace, slug, display_name, summary, state)| crate::types::Project {
+            id,
+            namespace,
+            slug,
+            display_name,
+            summary,
+            state,
+        },
+    ))
 }

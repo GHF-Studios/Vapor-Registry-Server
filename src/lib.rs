@@ -66,7 +66,8 @@ pub async fn routers_from_env() -> Result<RegistryRouters, Box<dyn std::error::E
             "/v1/providers/{provider}/{login}",
             get(get_provider_account),
         )
-        .with_state(state.clone());
+        .with_state(state.clone())
+        .merge(project_router(state.clone()));
     let admin = admin::router(state);
     Ok(RegistryRouters { api, admin })
 }
@@ -199,4 +200,121 @@ fn internal_error(error: sqlx::Error) -> ApiError {
             error: "registry database operation failed".to_owned(),
         }),
     )
+}
+
+#[cfg(test)]
+mod project_tests;
+
+fn project_router(state: AppState) -> Router {
+    Router::new()
+        .route("/v1/me/projects", get(get_me_projects))
+        .route("/v1/projects/{namespace}/{slug}", get(get_project))
+        .layer(axum::middleware::map_response(project_private_response))
+        .with_state(state)
+}
+async fn project_private_response(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert("cache-control", "private, no-store".parse().unwrap());
+    response
+}
+fn project_error(status: StatusCode) -> Response {
+    let message = match status {
+        StatusCode::UNAUTHORIZED => "sign in required",
+        StatusCode::NOT_FOUND => "resource not found",
+        _ => "project service unavailable",
+    };
+    (
+        status,
+        Json(ErrorResponse {
+            error: message.to_owned(),
+        }),
+    )
+        .into_response()
+}
+fn project_auth_error(error: authorization::ProjectAuthorizationError) -> Response {
+    project_error(match error {
+        authorization::ProjectAuthorizationError::InvalidSession => StatusCode::UNAUTHORIZED,
+        authorization::ProjectAuthorizationError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+    })
+}
+fn user_session_token(headers: &HeaderMap) -> Option<&str> {
+    let mut session = None;
+    for cookie in headers.get_all(COOKIE) {
+        for part in cookie.to_str().ok()?.split(';') {
+            let Some((name, value)) = part.trim().split_once('=') else {
+                continue;
+            };
+            if name == "vapor_user_session" {
+                if session.is_some()
+                    || !(32..=256).contains(&value.len())
+                    || !value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+                {
+                    return None;
+                }
+                session = Some(value);
+            }
+        }
+    }
+    session
+}
+async fn get_me_projects(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(session) = user_session_token(&headers) else {
+        return project_error(StatusCode::UNAUTHORIZED);
+    };
+    let Some(identity) = &state.authorization else {
+        return project_error(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    let memberships = match identity.list_projects(session).await {
+        Ok(memberships) => memberships,
+        Err(error) => return project_auth_error(error),
+    };
+    let mut projects = Vec::new();
+    for membership in memberships {
+        match db::project(&state.pool, &membership.project_id).await {
+            Ok(Some(project)) => projects.push(types::AccessibleProject {
+                project,
+                role: membership.role,
+            }),
+            Ok(None) => {}
+            Err(_) => return project_error(StatusCode::SERVICE_UNAVAILABLE),
+        }
+    }
+    projects.sort_by(|a, b| a.project.id.cmp(&b.project.id));
+    Json(serde_json::json!({"projects":projects})).into_response()
+}
+async fn get_project(
+    path: Result<AxumPath<(String, String)>, axum::extract::rejection::PathRejection>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(session) = user_session_token(&headers) else {
+        return project_error(StatusCode::UNAUTHORIZED);
+    };
+    let Ok(AxumPath((namespace, slug))) = path else {
+        return project_error(StatusCode::NOT_FOUND);
+    };
+    if !authorization::valid_project_component(&namespace)
+        || !authorization::valid_project_component(&slug)
+    {
+        return project_error(StatusCode::NOT_FOUND);
+    }
+    let Some(identity) = &state.authorization else {
+        return project_error(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    let id = format!("{namespace}/{slug}");
+    let role = match identity.check_project(session, &id).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return project_error(StatusCode::NOT_FOUND),
+        Err(error) => return project_auth_error(error),
+    };
+    match db::project(&state.pool, &id).await {
+        Ok(Some(project)) => {
+            Json(serde_json::json!({"project":project,"membership":{"role":role}})).into_response()
+        }
+        Ok(None) => project_error(StatusCode::NOT_FOUND),
+        Err(_) => project_error(StatusCode::SERVICE_UNAVAILABLE),
+    }
 }

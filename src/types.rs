@@ -3,7 +3,7 @@ use sqlx::SqlitePool;
 
 use crate::authorization::LocalSourceRequirement;
 
-pub const REGISTRY_SCHEMA_VERSION: u32 = 2;
+pub const REGISTRY_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -89,4 +89,20 @@ pub struct ProviderAccountResponse {
     pub schema_version: u32,
     pub account: ProviderAccount,
     pub repositories: Vec<ProviderRepository>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct Project {
+    pub id: String,
+    pub namespace: String,
+    pub slug: String,
+    pub display_name: String,
+    pub summary: String,
+    pub state: String,
+}
+#[derive(Serialize)]
+pub(crate) struct AccessibleProject {
+    #[serde(flatten)]
+    pub project: Project,
+    pub role: String,
 }

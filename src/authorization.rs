@@ -80,6 +80,7 @@ impl IdentityAuthorizationClient {
             .connect_timeout(std::time::Duration::from_secs(1))
             .timeout(std::time::Duration::from_secs(3))
             .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
             .user_agent("Vapor-Registry-Server/0.1")
             .build()
             .ok()?;
@@ -136,10 +137,20 @@ impl IdentityAuthorizationClient {
     }
 }
 
-async fn read_bounded_response(mut response: reqwest::Response) -> Result<Vec<u8>, ()> {
+async fn read_bounded_response(response: reqwest::Response) -> Result<Vec<u8>, ()> {
+    read_response_limit(response, MAX_AUTH_RESPONSE_BYTES).await
+}
+
+async fn read_response_limit(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, ()> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(());
+    }
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
-        if body.len().saturating_add(chunk.len()) > MAX_AUTH_RESPONSE_BYTES {
+        if body.len().saturating_add(chunk.len()) > limit {
             return Err(());
         }
         body.extend_from_slice(&chunk);
@@ -162,7 +173,7 @@ fn is_loopback_url(url: &Url) -> bool {
     }
     matches!(
         url.host_str(),
-        Some("127.0.0.1") | Some("localhost") | Some("::1")
+        Some("127.0.0.1") | Some("localhost") | Some("::1") | Some("[::1]")
     )
 }
 
@@ -212,5 +223,140 @@ mod tests {
 
         assert!(client.allows("session-token", &policy).await.is_err());
         server.abort();
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum ProjectAuthorizationError {
+    InvalidSession,
+    Unavailable,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProjectMembership {
+    pub project_id: String,
+    pub role: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectListResponse {
+    memberships: Vec<ProjectMembership>,
+    expires_at_unix: i64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectCheckResponse {
+    allowed: bool,
+    role: Option<String>,
+    expires_at_unix: i64,
+}
+
+pub(crate) fn valid_project_component(value: &str) -> bool {
+    (1..=63).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+}
+fn valid_project_id(value: &str) -> bool {
+    value.split_once('/').is_some_and(|(namespace, slug)| {
+        valid_project_component(namespace) && valid_project_component(slug)
+    })
+}
+fn valid_project_role(role: &str) -> bool {
+    matches!(role, "owner" | "developer" | "viewer")
+}
+fn live_decision(expiry: i64) -> bool {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .is_ok_and(|now| expiry > now.as_secs() as i64)
+}
+
+impl IdentityAuthorizationClient {
+    async fn project_request<T: serde::de::DeserializeOwned>(
+        &self,
+        operation: &str,
+        body: serde_json::Value,
+    ) -> Result<T, ProjectAuthorizationError> {
+        use ProjectAuthorizationError::Unavailable;
+        // Preserve a monolith's /api/identity prefix without trusting an arbitrary path.
+        if !is_loopback_url(&self.url) || !is_service_token(&self.service_token) {
+            return Err(Unavailable);
+        }
+        let prefix = self
+            .url
+            .path()
+            .strip_suffix("/v1/internal/authorization/check")
+            .ok_or(Unavailable)?;
+        let mut url = self.url.clone();
+        url.set_path(&format!("{prefix}/v1/internal/projects/{operation}"));
+        let response = self
+            .http
+            .post(url)
+            .bearer_auth(&self.service_token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|_| Unavailable)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ProjectAuthorizationError::InvalidSession);
+        }
+        if response.status() != reqwest::StatusCode::OK {
+            return Err(Unavailable);
+        }
+        let bytes = read_response_limit(response, 65536)
+            .await
+            .map_err(|_| Unavailable)?;
+        serde_json::from_slice(&bytes).map_err(|_| Unavailable)
+    }
+
+    pub(crate) async fn list_projects(
+        &self,
+        session_token: &str,
+    ) -> Result<Vec<ProjectMembership>, ProjectAuthorizationError> {
+        use ProjectAuthorizationError::Unavailable;
+        let response: ProjectListResponse = self
+            .project_request(
+                "list",
+                serde_json::json!({"audience":"vapor-registry","session_token":session_token}),
+            )
+            .await?;
+        if !live_decision(response.expires_at_unix) || response.memberships.len() > 512 {
+            return Err(Unavailable);
+        }
+        let mut ids = std::collections::HashSet::new();
+        for membership in &response.memberships {
+            if !valid_project_id(&membership.project_id)
+                || !valid_project_role(&membership.role)
+                || !ids.insert(&membership.project_id)
+            {
+                return Err(Unavailable);
+            }
+        }
+        Ok(response.memberships)
+    }
+
+    pub(crate) async fn check_project(
+        &self,
+        session_token: &str,
+        project_id: &str,
+    ) -> Result<Option<String>, ProjectAuthorizationError> {
+        use ProjectAuthorizationError::Unavailable;
+        if !valid_project_id(project_id) {
+            return Err(Unavailable);
+        }
+        let response: ProjectCheckResponse = self.project_request("check", serde_json::json!({"audience":"vapor-registry","session_token":session_token,"project_id":project_id,"minimum_role":"viewer"})).await?;
+        if !live_decision(response.expires_at_unix)
+            || response
+                .role
+                .as_deref()
+                .is_some_and(|role| !valid_project_role(role))
+        {
+            return Err(Unavailable);
+        }
+        if response.allowed {
+            response.role.map(Some).ok_or(Unavailable)
+        } else {
+            Ok(None)
+        }
     }
 }
