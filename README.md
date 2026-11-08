@@ -1,8 +1,13 @@
 # Vapor Registry Server
 
-Canonical Registry service for Vapor semantic identity and external-provider linkage.
+Registry service for Vapor ecosystem/source topology today, with the future
+typed-content catalog boundary defined separately.
 
 The Registry does not replace Git, GitHub, Steam, or Vapor Identity.
+
+The current service is a source-topology registry, not the planned Vapor
+content catalog. It does not yet store typed content identities, Workshop
+bindings, discovery metadata, release channels, or publishing decisions.
 
 Its current responsibilities are deliberately small:
 
@@ -34,3 +39,4 @@ GET /healthz
 GET /v1/status
 GET /v1/ecosystems/{namespace}/{name}
 GET /v1/providers/{provider}/{login}
+GET /admin/registry (root-authorized read-only ecosystem/source inventory)

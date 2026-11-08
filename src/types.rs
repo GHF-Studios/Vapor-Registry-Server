@@ -26,7 +26,7 @@ pub struct RegistryStatus {
 }
 
 #[derive(Debug)]
-pub struct AdminCatalogEntry {
+pub struct AdminEcosystemRow {
     pub ecosystem_id: String,
     pub display_name: String,
     pub visibility: String,

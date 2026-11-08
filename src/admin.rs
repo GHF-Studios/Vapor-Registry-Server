@@ -9,15 +9,15 @@ use axum::Router;
 
 pub(crate) fn router(state: AppState) -> Router {
     Router::new()
-        .route("/admin/workshop", get(workshop_page))
+        .route("/admin/registry", get(registry_page))
         .with_state(state)
 }
 
-async fn workshop_page(State(state): State<AppState>, headers: HeaderMap) -> Response {
+async fn registry_page(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let Some(session_token) = session_token(&headers) else {
         return plain_response(
             StatusCode::UNAUTHORIZED,
-            "Sign in to view the Workshop registry.",
+            "Sign in to view Registry records.",
         );
     };
     let Some(authorizer) = state.authorization.as_ref() else {
@@ -45,17 +45,17 @@ async fn workshop_page(State(state): State<AppState>, headers: HeaderMap) -> Res
         }
     }
 
-    let entries = match crate::db::admin_catalog(&state.pool).await {
-        Ok(entries) => entries,
+    let ecosystems = match crate::db::admin_ecosystems(&state.pool).await {
+        Ok(ecosystems) => ecosystems,
         Err(error) => {
-            eprintln!("registry admin catalog query failed: {error}");
+            eprintln!("registry admin ecosystem query failed: {error}");
             return plain_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "The catalog could not be loaded.",
+                "Registry records could not be loaded.",
             );
         }
     };
-    admin_page_response(StatusCode::OK, render_catalog(&entries))
+    admin_page_response(StatusCode::OK, render_ecosystem_inventory(&ecosystems))
 }
 
 fn session_token(headers: &HeaderMap) -> Option<String> {
@@ -75,8 +75,8 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
         })
 }
 
-fn render_catalog(entries: &[crate::types::AdminCatalogEntry]) -> String {
-    let rows = entries
+fn render_ecosystem_inventory(ecosystems: &[crate::types::AdminEcosystemRow]) -> String {
+    let rows = ecosystems
         .iter()
         .map(|entry| {
             let source = match (&entry.provider, &entry.owner, &entry.repository) {
@@ -96,7 +96,7 @@ fn render_catalog(entries: &[crate::types::AdminCatalogEntry]) -> String {
                 .map(escape_html)
                 .unwrap_or_else(|| "—".to_owned());
             format!(
-                "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>None recorded</td><td>Not tracked</td></tr>",
+                "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 escape_html(&entry.display_name),
                 escape_html(&entry.ecosystem_id),
                 escape_html(&entry.visibility),
@@ -106,14 +106,14 @@ fn render_catalog(entries: &[crate::types::AdminCatalogEntry]) -> String {
             )
         })
         .collect::<String>();
-    let rows = if entries.is_empty() {
-        "<tr><td colspan=\"8\">No catalog entries are recorded.</td></tr>".to_owned()
+    let rows = if ecosystems.is_empty() {
+        "<tr><td colspan=\"6\">No ecosystem records are registered.</td></tr>".to_owned()
     } else {
         rows
     };
-    let count = entries.len();
+    let count = ecosystems.len();
     format!(
-        "<p class=\"eyebrow\">Workshop · Registry</p><h1>Catalog</h1><p class=\"muted\">Read-only registry inventory · {count} rows shown (maximum 200)</p><div class=\"card\"><div class=\"table-scroll\" role=\"region\" tabindex=\"0\" aria-label=\"Registry catalog table\"><table><thead><tr><th>Ecosystem</th><th>Canonical ID</th><th>Visibility</th><th>Source</th><th>Source kind</th><th>Checkout path</th><th>Workshop binding</th><th>Release channel</th></tr></thead><tbody>{rows}</table></div><p class=\"muted\">Publishing and catalog mutation are not available in this view.</p></div>"
+        "<p class=\"eyebrow\">Registry · Ecosystem sources</p><h1>Ecosystem source inventory</h1><p class=\"muted\">This inventory describes Vapor ecosystems and their source repositories. It is not the Vapor content catalog: typed content, distribution bindings, releases, and publishing decisions have no records here yet.</p><div class=\"card\"><div class=\"table-scroll\" role=\"region\" tabindex=\"0\" aria-label=\"Ecosystem source inventory\"><table><thead><tr><th>Ecosystem</th><th>Ecosystem ID</th><th>Visibility</th><th>Source repository</th><th>Repository type</th><th>Checkout path</th></tr></thead><tbody>{rows}</table></div><p class=\"muted\">{count} ecosystems · maximum 200</p></div>"
     )
 }
 
@@ -243,9 +243,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workshop_admin_requires_root_session() {
+    async fn registry_admin_requires_root_session() {
         let (state, server) = test_state().await;
-        let response = super::workshop_page(State(state), HeaderMap::new()).await;
+        let response = super::registry_page(State(state), HeaderMap::new()).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
             response.headers().get("content-type").unwrap(),
@@ -259,9 +259,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workshop_admin_lists_bounded_catalog_and_escapes_labels() {
+    async fn registry_admin_lists_source_topology_and_escapes_labels() {
         let (state, server) = test_state().await;
-        let response = super::workshop_page(State(state), session_headers()).await;
+        let response = super::registry_page(State(state), session_headers()).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get("content-type").unwrap(),
@@ -269,7 +269,7 @@ mod tests {
         );
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let html = std::str::from_utf8(&body).unwrap();
-        assert!(html.starts_with("<p class=\"eyebrow\">Workshop · Registry</p>"));
+        assert!(html.starts_with("<p class=\"eyebrow\">Registry · Ecosystem sources</p>"));
         assert!(!html.contains("<!doctype html>"));
         assert!(!html.contains("<html"));
         assert!(!html.contains("<head"));
@@ -277,11 +277,13 @@ mod tests {
         assert!(!html.contains("</main>"));
         assert!(html.contains("Vapor"));
         assert!(html.contains("ghf-studios/vapor"));
-        assert!(html.contains("Not tracked"));
+        assert!(html.contains("source repositories"));
+        assert!(!html.contains("Workshop binding"));
+        assert!(!html.contains("Release channel"));
         assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
         assert!(!html.contains("<img src=x onerror=alert(1)>"));
-        assert!(html.contains("Publishing and catalog mutation are not available"));
-        assert!(html.contains("aria-label=\"Registry catalog table\""));
+        assert!(html.contains("not implemented here yet"));
+        assert!(html.contains("aria-label=\"Ecosystem source inventory\""));
         assert!(!html.contains("<button"));
         assert!(!html.contains("<form"));
         server.abort();

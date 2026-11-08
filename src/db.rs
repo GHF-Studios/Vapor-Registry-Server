@@ -1,6 +1,6 @@
 use crate::authorization::{LocalSourceRequirement, PermissionPolicy};
 use crate::types::{
-    AdminCatalogEntry, Ecosystem, EcosystemRepository, EcosystemResponse, ProviderAccount,
+    AdminEcosystemRow, Ecosystem, EcosystemRepository, EcosystemResponse, ProviderAccount,
     ProviderAccountResponse, ProviderRepository, RegistryStatus, REGISTRY_SCHEMA_VERSION,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -368,7 +368,7 @@ pub async fn status(pool: &SqlitePool) -> Result<RegistryStatus, sqlx::Error> {
     })
 }
 
-pub async fn admin_catalog(pool: &SqlitePool) -> Result<Vec<AdminCatalogEntry>, sqlx::Error> {
+pub async fn admin_ecosystems(pool: &SqlitePool) -> Result<Vec<AdminEcosystemRow>, sqlx::Error> {
     let rows = sqlx::query_as::<
         _,
         (
@@ -420,7 +420,7 @@ pub async fn admin_catalog(pool: &SqlitePool) -> Result<Vec<AdminCatalogEntry>, 
                 repository,
                 source_kind,
                 checkout_path,
-            )| AdminCatalogEntry {
+            )| AdminEcosystemRow {
                 ecosystem_id,
                 display_name,
                 visibility: visibility.unwrap_or_else(|| "unknown".to_owned()),
