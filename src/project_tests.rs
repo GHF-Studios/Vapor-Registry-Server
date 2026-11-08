@@ -202,7 +202,9 @@ async fn projects_require_live_user_membership_and_fail_closed() {
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers()["cache-control"], "private, no-store");
     let body: Value = response.json().await.unwrap();
-    assert_eq!(body["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(body["projects"].as_array().unwrap().len(), 2);
+    assert_eq!(body["projects"][1]["id"], "ghf-studios/mad-max-modding");
+    assert_eq!(body["projects"][1]["state"], "archived");
     assert_eq!(body["projects"][0]["id"], "ghf-studios/loo-cast");
     assert_eq!(body["projects"][0]["role"], "developer");
     assert_eq!(body["projects"][0]["display_name"], html_label);
@@ -225,12 +227,23 @@ async fn projects_require_live_user_membership_and_fail_closed() {
         observed.lock().unwrap().last().unwrap(),
         &json!({"audience":"vapor-registry","session_token":"s".repeat(64),"project_id":"ghf-studios/loo-cast","minimum_role":"viewer"})
     );
-    for path in [
-        "/v1/projects/unknown/missing",
-        "/v1/projects/ghf-studios/mad-max-modding",
-    ] {
-        assert_eq!(request(path).send().await.unwrap().status(), 404);
-    }
+    let archived = request("/v1/projects/ghf-studios/mad-max-modding")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(archived.status(), 200);
+    assert_eq!(archived.headers()["cache-control"], "private, no-store");
+    let archived: Value = archived.json().await.unwrap();
+    assert_eq!(archived["project"]["state"], "archived");
+    assert_eq!(archived["membership"]["role"], "viewer");
+    assert_eq!(
+        request("/v1/projects/unknown/missing")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
     *reply.lock().unwrap() = (
         StatusCode::OK,
         json!({"allowed":false,"expires_at_unix":i64::MAX}).to_string(),

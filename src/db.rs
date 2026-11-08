@@ -692,7 +692,12 @@ pub(crate) async fn project(
     pool: &SqlitePool,
     id: &str,
 ) -> Result<Option<crate::types::Project>, sqlx::Error> {
-    let row = sqlx::query_as::<_, (String,String,String,String,String,String)>("SELECT id,namespace,slug,display_name,summary,state FROM projects WHERE id = ? AND state = 'active'").bind(id).fetch_optional(pool).await?;
+    let row = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+        "SELECT id,namespace,slug,display_name,summary,state FROM projects WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
     Ok(row.map(
         |(id, namespace, slug, display_name, summary, state)| crate::types::Project {
             id,

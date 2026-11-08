@@ -53,7 +53,8 @@ repositories, granting memberships, or changing the ecosystem API.
 
 - `GET /v1/me/projects` returns
   `{ "projects": [{ "id", "namespace", "slug", "display_name", "summary", "state", "role" }] }`.
-  Only active Registry records matching Identity's current memberships appear.
+  Active and archived Registry records matching Identity's current memberships appear.
+  Archived Projects remain member-readable and read-only.
   An authenticated account with no matching Projects receives an empty array.
 - `GET /v1/projects/{namespace}/{slug}` returns
   `{ "project": { "id", "namespace", "slug", "display_name", "summary", "state" }, "membership": { "role" } }`
@@ -63,7 +64,7 @@ repositories, granting memberships, or changing the ecosystem API.
 Both APIs read only the `vapor_user_session` cookie. Operator cookies and
 browser bearer headers cannot authorize them. Every response uses
 `Cache-Control: private, no-store`; missing/invalid sessions return 401,
-unknown/archived Projects and absent membership return the same generic 404,
+unknown Projects and absent membership return the same generic 404,
 and Identity configuration, credential, outage, or protocol failures return
 503. Membership decisions are never cached between requests.
 
