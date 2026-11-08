@@ -113,7 +113,7 @@ fn render_ecosystem_inventory(ecosystems: &[crate::types::AdminEcosystemRow]) ->
     };
     let count = ecosystems.len();
     format!(
-        "<p class=\"eyebrow\">Registry · Ecosystem sources</p><h1>Ecosystem source inventory</h1><p class=\"muted\">This inventory describes Vapor ecosystems and their source repositories. It is not the Vapor content catalog: typed content, distribution bindings, releases, and publishing decisions have no records here yet.</p><div class=\"card\"><div class=\"table-scroll\" role=\"region\" tabindex=\"0\" aria-label=\"Ecosystem source inventory\"><table><thead><tr><th>Ecosystem</th><th>Ecosystem ID</th><th>Visibility</th><th>Source repository</th><th>Repository type</th><th>Checkout path</th></tr></thead><tbody>{rows}</table></div><p class=\"muted\">{count} ecosystems · maximum 200</p></div>"
+        "<p class=\"eyebrow\">Registry · Ecosystem sources</p><h1>Ecosystem source inventory</h1><p class=\"muted\">This inventory describes Vapor ecosystems and their source repositories. The Vapor content catalog is not implemented here yet. Typed content, distribution bindings, releases, and publishing decisions belong to that separate catalog.</p><div class=\"card\"><div class=\"table-scroll\" role=\"region\" tabindex=\"0\" aria-label=\"Ecosystem source inventory\"><table><thead><tr><th>Ecosystem</th><th>Ecosystem ID</th><th>Visibility</th><th>Source repository</th><th>Repository type</th><th>Checkout path</th></tr></thead><tbody>{rows}</table></div><p class=\"muted\">{count} ecosystems · maximum 200</p></div>"
     )
 }
 
