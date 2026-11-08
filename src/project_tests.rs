@@ -28,6 +28,42 @@ async fn project_migration_seeds_separate_directory_idempotently() {
             .unwrap(),
         1
     );
+    sqlx::query(
+        "UPDATE projects SET state='archived', summary='Custom summary' WHERE slug='loo-cast'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    db::initialize(&pool).await.unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT state,summary FROM projects WHERE slug='loo-cast'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        ("archived".into(), "Custom summary".into())
+    );
+    assert!(
+        sqlx::query("UPDATE projects SET id='different/id' WHERE slug='loo-cast'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("UPDATE projects SET display_name=? WHERE slug='loo-cast'")
+            .bind("x".repeat(201))
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("UPDATE projects SET summary=? WHERE slug='loo-cast'")
+            .bind("x".repeat(2001))
+            .execute(&pool)
+            .await
+            .is_err()
+    );
     for (namespace, slug, state) in [
         ("bad/name", "ok", "active"),
         ("ok", "BAD", "active"),
@@ -44,6 +80,30 @@ async fn project_migration_seeds_separate_directory_idempotently() {
                 .is_err()
         );
     }
+}
+
+#[test]
+fn project_cookie_rejects_duplicate_and_oversized_credentials() {
+    let mut headers = HeaderMap::new();
+    let token = "s".repeat(64);
+    headers.append(
+        COOKIE,
+        format!("vapor_user_session={token}").parse().unwrap(),
+    );
+    assert_eq!(user_session_token(&headers), Some(token.as_str()));
+    headers.append(
+        COOKIE,
+        format!("vapor_user_session={token}").parse().unwrap(),
+    );
+    assert!(user_session_token(&headers).is_none());
+    headers.clear();
+    headers.insert(
+        COOKIE,
+        format!("vapor_user_session={}", "s".repeat(257))
+            .parse()
+            .unwrap(),
+    );
+    assert!(user_session_token(&headers).is_none());
 }
 
 use axum::routing::post;
@@ -203,7 +263,7 @@ async fn projects_require_live_user_membership_and_fail_closed() {
             assert_eq!(response.headers()["cache-control"], "private, no-store");
         }
     }
-    for body in [json!({"memberships":[{"project_id":"ghf-studios/loo-cast","role":"root"}],"expires_at_unix":i64::MAX}).to_string(),json!({"memberships":[],"expires_at_unix":0}).to_string(),"x".repeat(70000),"{}".into(),json!({"memberships":[{"project_id":"bad","role":"viewer"}],"expires_at_unix":i64::MAX}).to_string()] {
+    for body in [json!({"memberships":[{"project_id":"ghf-studios/loo-cast","role":"viewer"},{"project_id":"ghf-studios/loo-cast","role":"owner"}],"expires_at_unix":i64::MAX}).to_string(),json!({"memberships":[{"project_id":"ghf-studios/loo-cast","role":"root"}],"expires_at_unix":i64::MAX}).to_string(),json!({"memberships":[],"expires_at_unix":0}).to_string(),"x".repeat(70000),"{}".into(),json!({"memberships":[{"project_id":"bad","role":"viewer"}],"expires_at_unix":i64::MAX}).to_string()] {
         *reply.lock().unwrap()=(StatusCode::OK,body);
         assert_eq!(request("/v1/me/projects").send().await.unwrap().status(),503);
     }
