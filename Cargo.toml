@@ -11,3 +11,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

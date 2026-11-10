@@ -1,5 +1,6 @@
 mod admin;
 mod authorization;
+mod dashboard;
 mod db;
 mod types;
 
@@ -22,6 +23,7 @@ const DEFAULT_DB_NAME: &str = "registry.sqlite3";
 
 pub struct RegistryRouters {
     pub api: Router,
+    pub web: Router,
     pub admin: Router,
 }
 
@@ -31,7 +33,7 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 
 pub async fn app_router_from_env() -> Result<Router, Box<dyn std::error::Error>> {
     let routers = routers_from_env().await?;
-    Ok(routers.api.merge(routers.admin))
+    Ok(routers.api.merge(routers.web).merge(routers.admin))
 }
 
 pub async fn routers_from_env() -> Result<RegistryRouters, Box<dyn std::error::Error>> {
@@ -68,8 +70,9 @@ pub async fn routers_from_env() -> Result<RegistryRouters, Box<dyn std::error::E
         )
         .with_state(state.clone())
         .merge(project_router(state.clone()));
+    let web = dashboard::router();
     let admin = admin::router(state);
-    Ok(RegistryRouters { api, admin })
+    Ok(RegistryRouters { api, web, admin })
 }
 
 async fn healthz() -> &'static str {
